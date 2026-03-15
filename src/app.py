@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+import json
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -18,6 +19,14 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+# Load teachers
+with open(os.path.join(current_dir, "teachers.json")) as f:
+    teachers_data = json.load(f)
+teachers = {t["username"]: t["password"] for t in teachers_data["teachers"]}
+
+# Global login state (for simplicity, single teacher)
+teacher_logged_in = False
 
 # In-memory activity database
 activities = {
@@ -83,6 +92,30 @@ def root():
     return RedirectResponse(url="/static/index.html")
 
 
+@app.post("/login")
+def login(username: str, password: str):
+    """Login for teachers"""
+    global teacher_logged_in
+    if username in teachers and teachers[username] == password:
+        teacher_logged_in = True
+        return {"message": "Logged in successfully"}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.post("/logout")
+def logout():
+    """Logout"""
+    global teacher_logged_in
+    teacher_logged_in = False
+    return {"message": "Logged out"}
+
+
+@app.get("/login/status")
+def login_status():
+    """Check login status"""
+    return {"logged_in": teacher_logged_in}
+
+
 @app.get("/activities")
 def get_activities():
     return activities
@@ -91,6 +124,9 @@ def get_activities():
 @app.post("/activities/{activity_name}/signup")
 def signup_for_activity(activity_name: str, email: str):
     """Sign up a student for an activity"""
+    if not teacher_logged_in:
+        raise HTTPException(status_code=403, detail="Only teachers can manage signups")
+    
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -113,6 +149,9 @@ def signup_for_activity(activity_name: str, email: str):
 @app.delete("/activities/{activity_name}/unregister")
 def unregister_from_activity(activity_name: str, email: str):
     """Unregister a student from an activity"""
+    if not teacher_logged_in:
+        raise HTTPException(status_code=403, detail="Only teachers can manage signups")
+    
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -130,3 +169,8 @@ def unregister_from_activity(activity_name: str, email: str):
     # Remove student
     activity["participants"].remove(email)
     return {"message": f"Unregistered {email} from {activity_name}"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
